@@ -1,0 +1,125 @@
+================================================================================
+Traffic Demand Prediction - Gridlock Hackathon
+Approach Document
+================================================================================
+
+1. PROBLEM OVERVIEW
+-------------------
+Predict traffic demand at various geolocations given features like geohash,
+timestamp, road type, weather, temperature, landmarks, and lane count.
+Evaluation metric: score = max(0, 100 * R2_score(actual, predicted))
+
+2. FEATURE ENGINEERING (80+ features)
+--------------------------------------
+a) Geohash Decoding:
+   - Decoded geohash to latitude/longitude coordinates
+   - Created geo_prefix3, geo_prefix4, geo_prefix5 for area-level grouping
+   - Geohash length and frequency encoding
+
+b) Temporal Features:
+   - Extracted hour and minute from timestamp
+   - Created 96 time-slots (15-min intervals)
+   - Cyclical encoding (sin/cos) for hour, minute, time_slot
+   - Time-of-day buckets: night, morning, midday, afternoon, evening
+   - Rush hour indicator, early morning, late night flags
+
+c) Temperature Features:
+   - Missing indicator, squared, absolute value
+   - Categorical bins: freezing, cold, mild, warm, hot
+   - 10-bin discretization
+
+d) Categorical Encoding:
+   - RoadType: one-hot (Residential, Street, Highway) + missing indicator
+   - Weather: ordinal + one-hot (Sunny, Rainy, Foggy, Snowy) + missing indicator
+   - LargeVehicles & Landmarks: binary encoding
+   - NumberofLanes: squared, log-transformed
+
+e) Interaction Features (25+):
+   - lanes x weather, temp x weather, hour x day
+   - rush x highway, rush x lane, rush x temp
+   - large_vehicles x highway, landmark x highway
+   - snow x temp, fog x hour, rain x rush
+   - lat x lon, lat x hour, lon x hour, temp x hour
+   - lane x weather x hour (3-way interaction)
+   - Distance from geographic centroid
+
+f) Aggregation Features (target-based):
+   - geo_prefix4 stats: mean, std, median, count, min, max, range
+   - geo_prefix3 stats: mean, std, count
+   - geo_prefix5 stats: mean, std, count
+   - Geohash x Hour interaction stats
+   - Geohash x Day stats
+   - Hour-level demand stats (mean, std, median)
+   - Geohash x RoadType stats
+   - Geohash x Weather stats
+
+g) Target Encoding:
+   - Per-geohash mean demand
+   - Per-geohash x hour mean demand
+   - Per-RoadType mean demand
+   - Per-Weather mean demand
+   - Ratio features: geo vs hour, geo vs global
+
+3. TARGET TRANSFORMATION
+-------------------------
+- Applied log1p transformation to demand (right-skewed distribution)
+- Inverse transform (expm1) applied before scoring
+
+4. MODELS USED
+--------------
+All models tuned with Optuna (Bayesian hyperparameter optimization):
+
+a) LightGBM (100 Optuna trials)
+   - Search space: n_estimators (500-3000), learning_rate (0.005-0.1),
+     num_leaves (31-512), max_depth (4-15), etc.
+
+b) XGBoost (100 Optuna trials)
+   - Search space: n_estimators (500-3000), learning_rate (0.005-0.1),
+     max_depth (3-12), gamma (0-5), etc.
+
+c) CatBoost (80 Optuna trials)
+   - Search space: iterations (500-3000), learning_rate (0.005-0.1),
+     depth (4-10), border_count (32-255), etc.
+
+d) ExtraTrees (50 Optuna trials)
+   - Search space: n_estimators (300-2000), max_depth (10-40),
+     max_features (0.3-1.0), etc.
+
+5. ENSEMBLE STRATEGY
+---------------------
+a) Multi-seed OOF Ensemble:
+   - 5 different random seeds (42, 123, 456, 789, 2024)
+   - 7-fold cross-validation per seed
+   - Averaged predictions across seeds for stability
+
+b) Blending Methods:
+   - Weighted blend (weights proportional to OOF scores)
+   - Nelder-Mead optimized blend (scipy.optimize.minimize)
+   - Ridge meta-learner stacking
+   - BayesianRidge meta-learner stacking
+   - ElasticNet meta-learner stacking
+
+c) Post-processing:
+   - Alpha-search between top-2 candidates
+   - Clipping predictions to >= 0
+
+6. TOOLS & LIBRARIES
+---------------------
+- Python 3.x
+- pandas, numpy
+- scikit-learn (Ridge, BayesianRidge, ElasticNet, ExtraTreesRegressor, KFold)
+- LightGBM
+- XGBoost
+- CatBoost
+- Optuna (hyperparameter optimization)
+- geohash2 (geohash decoding)
+- scipy (optimization)
+- matplotlib, seaborn (visualization)
+
+7. VALIDATION STRATEGY
+-----------------------
+- 5-fold / 7-fold cross-validation with KFold
+- Competition metric (100 * R2) computed on raw demand (after inverse transform)
+- Multi-seed averaging to reduce variance
+
+================================================================================
